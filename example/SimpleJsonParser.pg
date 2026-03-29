@@ -1,0 +1,51 @@
+/// An example doing some string manipulation to extract values out of a known JSON object
+/// Shows how to use impulse contexts to sequence events
+module SimpleJsonParser
+where {
+
+/// This is the JSON we are parsing
+InputString = "{\"ID\":\"123-456\",\"Name\":\"User1\",\"Age\":35}";
+
+// Temp variable
+store ExtractedString: string;
+
+// The values being parsed to. Store with the data model.
+
+sync ID: string;
+WriteID = ID <- ExtractedString;
+display(ID);
+
+sync Name: string;
+WriteName = Name <- ExtractedString;
+display(Name);
+
+sync Age: int;
+WriteAge = Age <- Parse_Int(ExtractedString).Value;
+display(Age);
+
+// Keep two sets of start/end strings that are used to find the stuff we want.
+// Assume that the string has no extra white space and no , inside the strings.
+StartDelimiters = ["\"ID\":\"", "\"Name\":\"", "\"Age\":"];
+EndDelimiters = ["\",","\",","}"];
+
+// main loop that parses each member
+switch CallInput
+| Target |>
+switch For(Count=3)
+| LoopIteration ForNode |> 
+    impulse {
+        // most of this impulse isn't impulse stuff, just intermediate data value definitions
+        StartStringMux = ObjectMultiplex(ForNode.Iteration, StartDelimiters);
+        EndStringMux = ObjectMultiplex(ForNode.Iteration, EndDelimiters);
+
+        StartIndex = IndexOfString(InputString, StartStringMux.Output) + StringLength(StartStringMux.Output);
+        EndIndex = IndexOfString(InputString, EndStringMux.Output, StartIndex=StartIndex);
+
+        StringValue = Substring(InputString, StartIndex, EndIndex - StartIndex);
+        
+        // These two expressions are the actual impulses that are sequenced
+        // Use stored value as intermediate box to store string before parsing
+        ExtractedString <- StringValue;
+        ImpulseMultiplexer(Index=ForNode.Iteration, Impulses=[WriteID, WriteName, WriteAge]);
+    }
+}

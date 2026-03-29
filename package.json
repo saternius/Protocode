@@ -1,0 +1,91 @@
+{
+  "name": "protocode",
+  "displayName": "ProtoCode",
+  "description": "Bridge VSCode editor to Resonite ProtoCode Editor via WebSocket",
+  "version": "0.1.0",
+  "publisher": "resoniteweb",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "protocode.start",
+        "title": "ProtoCode: Start"
+      },
+      {
+        "command": "protocode.stop",
+        "title": "ProtoCode: Stop"
+      },
+      {
+        "command": "protocode.resizeWindow",
+        "title": "ProtoCode: Resize Window to Editor Size"
+      },
+      {
+        "command": "protocode.setWsPort",
+        "title": "ProtoCode: Set WebSocket Port"
+      },
+      {
+        "command": "protocode.setResonitelinkPort",
+        "title": "ProtoCode: Set ResoniteLink Port"
+      }
+    ],
+    "languages": [
+      {
+        "id": "protograph",
+        "aliases": ["ProtoGraph"],
+        "extensions": [".pg"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "protograph",
+        "scopeName": "source.pg",
+        "path": "./syntaxes/protograph.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "ProtoCode",
+      "properties": {
+        "protocode.wsPort": {
+          "type": "number",
+          "default": 3001,
+          "description": "WebSocket server port for Resonite NetLink connection"
+        },
+        "protocode.resonitelinkPort": {
+          "type": "number",
+          "default": 0,
+          "description": "ResoniteLink WebSocket port (changes frequently per session)"
+        },
+        "protocode.renderFps": {
+          "type": "number",
+          "default": 30,
+          "description": "Maximum render updates per second"
+        },
+        "protocode.syntaxHighlighting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable syntax highlighting for JavaScript files"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

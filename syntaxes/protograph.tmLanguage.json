@@ -1,0 +1,110 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ProtoGraph",
+  "scopeName": "source.pg",
+  "patterns": [
+    { "include": "#doc-comment" },
+    { "include": "#line-comment" },
+    { "include": "#module-declaration" },
+    { "include": "#interpolated-string" },
+    { "include": "#string" },
+    { "include": "#number-float" },
+    { "include": "#number-integer" },
+    { "include": "#arrow-operators" },
+    { "include": "#word-operators" },
+    { "include": "#boolean-null" },
+    { "include": "#type-keywords" },
+    { "include": "#keywords" },
+    { "include": "#pascal-case-identifier" }
+  ],
+  "repository": {
+    "doc-comment": {
+      "match": "///.*$",
+      "name": "comment.line.documentation.pg"
+    },
+    "line-comment": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.pg"
+    },
+    "module-declaration": {
+      "match": "\\b(module)\\s+([A-Z][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.pg" },
+        "2": { "name": "entity.name.type.pg" }
+      }
+    },
+    "interpolated-string": {
+      "begin": "\\$\"",
+      "end": "\"",
+      "name": "string.interpolated.pg",
+      "patterns": [
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "name": "meta.interpolation.pg",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.pg" } },
+          "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.pg" } },
+          "patterns": [
+            { "include": "#doc-comment" },
+            { "include": "#line-comment" },
+            { "include": "#number-float" },
+            { "include": "#number-integer" },
+            { "include": "#arrow-operators" },
+            { "include": "#word-operators" },
+            { "include": "#boolean-null" },
+            { "include": "#type-keywords" },
+            { "include": "#keywords" },
+            { "include": "#pascal-case-identifier" }
+          ]
+        },
+        {
+          "match": "\\\\(?:[abfnrtv\\\\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})",
+          "name": "constant.character.escape.pg"
+        }
+      ]
+    },
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.pg",
+      "patterns": [
+        {
+          "match": "\\\\(?:[abfnrtv\\\\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})",
+          "name": "constant.character.escape.pg"
+        }
+      ]
+    },
+    "number-float": {
+      "match": "\\b\\d+\\.\\d+f?\\b",
+      "name": "constant.numeric.float.pg"
+    },
+    "number-integer": {
+      "match": "\\b\\d+f?\\b",
+      "name": "constant.numeric.integer.pg"
+    },
+    "arrow-operators": {
+      "match": "->|\\|>|<-",
+      "name": "keyword.operator.arrow.pg"
+    },
+    "word-operators": {
+      "match": "\\b(mod|and|or|xor|not|nor|nand|xnor)\\b",
+      "name": "keyword.operator.word.pg"
+    },
+    "boolean-null": {
+      "match": "\\b(true|false|null)\\b",
+      "name": "constant.language.pg"
+    },
+    "type-keywords": {
+      "match": "\\b(int|float|string|bool|float2|float3|float4|floatQ|colorX|slot|user|object|int2|int3|int4|double|long|ulong|byte|short|ushort|uint)\\b",
+      "name": "storage.type.pg"
+    },
+    "keywords": {
+      "match": "\\b(module|in|out|where|sync|use|from|as|switch|impulse|if|then|else|pack|element|global|this)\\b",
+      "name": "keyword.control.pg"
+    },
+    "pascal-case-identifier": {
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.pg"
+    }
+  }
+}

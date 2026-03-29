@@ -1,0 +1,16 @@
+ProtoCode Example Files
+=======================
+
+This folder contains demo files for testing the ProtoCode extension.
+
+- demo.js       Exercises all syntax highlighter token types
+- game-loop.js  Realistic Resonite script with lifecycle hooks
+- notes.txt     Plain text (tests the fallback rendering path)
+
+Getting Started:
+1. Press F5 in the ProtoCode workspace to launch the Extension Dev Host
+2. This folder opens automatically in the sidebar
+3. Open any .js file to see syntax highlighting
+4. Run "ProtoCode: Start" from the command palette (Ctrl+Shift+P)
+5. Connect with: wscat -c ws://localhost:3001
+6. Edits in the editor stream as colored protocol messages
