@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import { EditBridge } from './edit-bridge';
 import { RenderEngine } from '../render/render-engine';
+import type { CompileManager } from '../services/compile-manager';
 import {
   RENDER_W, RENDER_H, CODE_AREA_TOP, LINE_H,
   GUTTER_RIGHT_X, CODE_LEFT_X, CHAR_W_APPROX, MAX_VISIBLE_LINES,
-  PANEL_RIGHT_X, MINIMAP_LEFT_X, FILE_AREA_TOP,
+  PANEL_RIGHT_X, SCROLLBAR_LEFT_X, FILE_AREA_TOP,
   MAX_FILE_ENTRIES, TRACK_TOP, TRACK_H
 } from '../render/display-constants';
 
@@ -21,7 +22,12 @@ export type ParsedEvent =
   | { type: 'pceKey'; key: string; shift: boolean; ctrl: boolean }
   | { type: 'pceScroll'; delta: number }
   | { type: 'pceMove'; x: number; y: number }
-  | { type: 'pceRelease'; x: number; y: number };
+  | { type: 'pceRelease'; x: number; y: number }
+  | { type: 'pceCompileBtn' }
+  | { type: 'pceCompileLocal' }
+  | { type: 'pceCompileRLDeploy'; refFieldCompId: string }
+  | { type: 'fileInfo' }
+  | { type: 'fileSave'; fileName: string; content: string };
 
 const APP_NAME = 'ProtoCodeEditor';
 
@@ -62,6 +68,7 @@ export class InputHandler {
   private editBridge: EditBridge;
   private renderEngine: RenderEngine;
   private log: vscode.OutputChannel;
+  private compileManager: CompileManager | null;
 
   // Keyboard modifier state
   private shiftActive = false;
@@ -74,10 +81,11 @@ export class InputHandler {
   private lastDragRenderTime: number = 0;
   private readonly DRAG_RENDER_MS = 50;
 
-  constructor(editBridge: EditBridge, renderEngine: RenderEngine, log: vscode.OutputChannel) {
+  constructor(editBridge: EditBridge, renderEngine: RenderEngine, log: vscode.OutputChannel, compileManager?: CompileManager | null) {
     this.editBridge = editBridge;
     this.renderEngine = renderEngine;
     this.log = log;
+    this.compileManager = compileManager ?? null;
   }
 
   handle(raw: string): void {
@@ -136,6 +144,12 @@ export class InputHandler {
             y: parseFloat(parts[1]) || 0
           };
         }
+        case 'pce_compile_btn':
+          return { type: 'pceCompileBtn' };
+        case 'pce_cw_local':
+          return { type: 'pceCompileLocal' };
+        case 'pce_cw_rl_deploy':
+          return { type: 'pceCompileRLDeploy', refFieldCompId: data };
       }
       return null;
     }
@@ -195,7 +209,13 @@ export class InputHandler {
         case 'triggerUp': return { type: 'triggerUp', x, y };
         case 'pointerMove':
         case 'pointDrag': return { type: 'pointerMove', x, y };
-        default: return null;
+        case 'thumbstickAxis': return { type: 'thumbstickAxis', x, y };
+        case 'fileInfo': return { type: 'fileInfo' };
+        default:
+          if (eventName.startsWith('save:')) {
+            return { type: 'fileSave', fileName: eventName.substring(5), content: data };
+          }
+          return null;
       }
     }
 
@@ -310,6 +330,26 @@ export class InputHandler {
       case 'activeUser':
         this.log.appendLine(`[Input] activeUser: ${event.username} (${event.id})`);
         break;
+      case 'pceCompileBtn':
+        this.log.appendLine('[Input] pceCompileBtn');
+        this.compileManager?.toggleWindow();
+        break;
+      case 'pceCompileLocal':
+        this.log.appendLine('[Input] pceCompileLocal');
+        this.compileManager?.compileLocal();
+        break;
+      case 'pceCompileRLDeploy':
+        this.log.appendLine(`[Input] pceCompileRLDeploy: ${event.refFieldCompId}`);
+        this.compileManager?.compileAndDeploy(event.refFieldCompId);
+        break;
+      case 'fileInfo':
+        this.log.appendLine('[Input] fileInfo request');
+        this.renderEngine.sendFileInfo();
+        break;
+      case 'fileSave':
+        this.log.appendLine(`[Input] fileSave: ${event.fileName}`);
+        this.handleFileSave(event.fileName, event.content);
+        break;
     }
   }
 
@@ -373,9 +413,9 @@ export class InputHandler {
       return;
     }
 
-    // Minimap region (right of MINIMAP_LEFT_X)
-    if (pxX >= MINIMAP_LEFT_X) {
-      this.handleMinimapClick(pxY);
+    // Scrollbar region (right of SCROLLBAR_LEFT_X)
+    if (pxX >= SCROLLBAR_LEFT_X) {
+      this.handleScrollbarClick(pxY);
       return;
     }
 
@@ -422,10 +462,9 @@ export class InputHandler {
         this.handleFileClick(idx);
         break;
       }
-      case 'minimap': {
-        // normY is 0..1 within minimap area
+      case 'scrollbar': {
         const pxY = (0.5 - normY) * RENDER_H;
-        this.handleMinimapClick(pxY);
+        this.handleScrollbarClick(pxY);
         break;
       }
     }
@@ -450,7 +489,7 @@ export class InputHandler {
     }
   }
 
-  private handleMinimapClick(pxY: number): void {
+  private handleScrollbarClick(pxY: number): void {
     const totalLines = this.renderEngine['getLineCount']();
     const maxScroll = Math.max(0, totalLines - MAX_VISIBLE_LINES);
     if (maxScroll <= 0) return;
@@ -495,6 +534,47 @@ export class InputHandler {
 
   private handleTriggerUp(): void {
     this.isSelectingText = false;
+  }
+
+  private static stripRichText(s: string): string {
+    return s
+      .replace(/<\/?color[^>]*>/gi, '')
+      .replace(/<\/?mark[^>]*>/gi, '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+
+  private async handleFileSave(fileName: string, content: string): Promise<void> {
+    const plain = InputHandler.stripRichText(content);
+
+    // Try to find an already-open document matching the file name
+    const doc = vscode.workspace.textDocuments.find(
+      d => d.fileName.split(/[\\/]/).pop() === fileName
+    );
+
+    if (doc) {
+      const editor = await vscode.window.showTextDocument(doc);
+      await editor.edit(editBuilder => {
+        const fullRange = new vscode.Range(
+          doc.positionAt(0),
+          doc.positionAt(doc.getText().length)
+        );
+        editBuilder.replace(fullRange, plain);
+      });
+      await doc.save();
+      this.log.appendLine(`[Input] fileSave: updated and saved ${fileName}`);
+    } else {
+      // File not open — write to workspace root
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) {
+        this.log.appendLine('[Input] fileSave: no workspace folder open');
+        return;
+      }
+      const uri = vscode.Uri.joinPath(folder.uri, fileName);
+      await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(plain));
+      this.log.appendLine(`[Input] fileSave: created ${uri.fsPath}`);
+    }
   }
 
   private handleThumbstickAxis(joyY: number): void {
