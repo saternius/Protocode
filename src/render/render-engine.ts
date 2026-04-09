@@ -5,7 +5,7 @@ import {
   RENDER_W, RENDER_H, LINE_H, MAX_VISIBLE_LINES,
   CODE_AREA_TOP, CHAR_W_APPROX, CODE_LEFT_X, GUTTER_RIGHT_X,
   LINE_HIGH_W, LINE_HIGH_CENTER_X, MAX_FILE_ENTRIES,
-  TRACK_TOP, TRACK_H, MINIMAP_W
+  TRACK_TOP, TRACK_H, SCROLLBAR_W
 } from './display-constants';
 
 function escHtml(s: string): string {
@@ -36,8 +36,10 @@ export class RenderEngine {
   private displayedLineNum: (string | null)[] = new Array(MAX_VISIBLE_LINES).fill(null);
   private displayedStatusText: string | null = null;
   private displayedFileEntry: (string | null)[] = new Array(MAX_FILE_ENTRIES).fill(null);
-  private displayedMinimap: string | null = null;
   private displayedToolbar: string | null = null;
+  private displayedScrollbarActive: boolean | null = null;
+  private displayedScrollbarPos: string | null = null;
+  private displayedScrollbarScale: string | null = null;
 
   constructor(proxy: EmbeddedProxy) {
     this.proxy = proxy;
@@ -73,8 +75,10 @@ export class RenderEngine {
 
   private startBlinkTimer(): void {
     this.blinkInterval = setInterval(() => {
-      this.cursorVisible = !this.cursorVisible;
-      this.proxy.sendBool('pce_ca', this.cursorVisible);
+      try {
+        this.cursorVisible = !this.cursorVisible;
+        this.proxy.sendBool('pce_ca', this.cursorVisible);
+      } catch { /* prevent unhandled errors from propagating as toast spam */ }
     }, 530);
   }
 
@@ -209,8 +213,10 @@ export class RenderEngine {
     this.displayedLineNum.fill(null);
     this.displayedStatusText = null;
     this.displayedFileEntry.fill(null);
-    this.displayedMinimap = null;
     this.displayedToolbar = null;
+    this.displayedScrollbarActive = null;
+    this.displayedScrollbarPos = null;
+    this.displayedScrollbarScale = null;
   }
 
   // ------------------------------------------------------------------
@@ -360,56 +366,6 @@ export class RenderEngine {
   }
 
   // ------------------------------------------------------------------
-  // Minimap
-  // ------------------------------------------------------------------
-
-  renderMinimap(): void {
-    const doc = this.getDocument();
-    if (!doc) {
-      if (this.displayedMinimap !== '') {
-        this.displayedMinimap = '';
-        this.proxy.send('pce_mm', '');
-        this.proxy.sendBool('pce_mva', false);
-      }
-      return;
-    }
-
-    const lineCount = doc.lineCount;
-    const maxLines = 200;
-    const lines: string[] = [];
-    const useHighlight = this.highlighter.enabled && this.isHighlightable();
-
-    for (let i = 0; i < Math.min(lineCount, maxLines); i++) {
-      const text = doc.lineAt(i).text.substring(0, 80);
-      if (useHighlight) {
-        lines.push(this.highlighter.highlight(text));
-      } else {
-        lines.push(`<color=#abb2bf>${escHtml(text)}</color>`);
-      }
-    }
-
-    const minimapText = lines.join('\n');
-    if (this.displayedMinimap !== minimapText) {
-      this.displayedMinimap = minimapText;
-      this.proxy.send('pce_mm', minimapText);
-    }
-
-    // Viewport indicator position and size
-    const totalLines = Math.max(lineCount, 1);
-    const viewFraction = MAX_VISIBLE_LINES / totalLines;
-    const scrollFraction = totalLines > MAX_VISIBLE_LINES
-      ? this.scrollOffset / (totalLines - MAX_VISIBLE_LINES)
-      : 0;
-
-    const viewportH = Math.max(20, viewFraction * TRACK_H);
-    const viewportY = TRACK_TOP - viewportH / 2 - scrollFraction * (TRACK_H - viewportH);
-
-    this.proxy.sendF3('pce_mvp', MINIMAP_W / 2, viewportY, 0.01);
-    this.proxy.sendF2('pce_mvs', MINIMAP_W, viewportH);
-    this.proxy.sendBool('pce_mva', true);
-  }
-
-  // ------------------------------------------------------------------
   // Toolbar
   // ------------------------------------------------------------------
 
@@ -420,6 +376,48 @@ export class RenderEngine {
     if (this.displayedToolbar !== toolbarText) {
       this.displayedToolbar = toolbarText;
       this.proxy.send('pce_tb', toolbarText);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Scrollbar thumb
+  // ------------------------------------------------------------------
+
+  private static readonly SCROLLBAR_CENTER_X = (RENDER_W / 2) - (SCROLLBAR_W / 2);
+
+  private sendScrollbar(): void {
+    const totalLines = this.getLineCount();
+
+    if (totalLines <= MAX_VISIBLE_LINES) {
+      if (this.displayedScrollbarActive !== false) {
+        this.displayedScrollbarActive = false;
+        this.proxy.sendBool('pce_sta', false);
+      }
+      return;
+    }
+
+    if (this.displayedScrollbarActive !== true) {
+      this.displayedScrollbarActive = true;
+      this.proxy.sendBool('pce_sta', true);
+    }
+
+    const thumbH = Math.max(20, TRACK_H * MAX_VISIBLE_LINES / totalLines);
+    const scrollableLines = totalLines - MAX_VISIBLE_LINES;
+    const scrollFraction = scrollableLines > 0 ? this.scrollOffset / scrollableLines : 0;
+    const thumbTravel = TRACK_H - thumbH;
+    const thumbY = TRACK_TOP - thumbH / 2 - scrollFraction * thumbTravel;
+
+    const posKey = `${thumbY}`;
+    if (this.displayedScrollbarPos !== posKey) {
+      this.displayedScrollbarPos = posKey;
+      this.proxy.sendF3('pce_stp', RenderEngine.SCROLLBAR_CENTER_X, thumbY, -60);
+    }
+
+    const scaleY = thumbH / TRACK_H;
+    const scaleKey = `${scaleY}`;
+    if (this.displayedScrollbarScale !== scaleKey) {
+      this.displayedScrollbarScale = scaleKey;
+      this.proxy.sendF3('pce_sts', 1, scaleY, 1);
     }
   }
 
@@ -444,7 +442,7 @@ export class RenderEngine {
     this.updateCursorPosition();
     this.updateLineHighlight();
     this.updateStatusBar();
-    this.renderMinimap();
+    this.sendScrollbar();
   }
 
   renderCursorMove(): void {
@@ -452,13 +450,14 @@ export class RenderEngine {
     this.updateCursorPosition();
     this.updateLineHighlight();
     this.updateStatusBar();
+    this.sendScrollbar();
   }
 
   renderScroll(): void {
     this.renderVisibleLines();
     this.updateCursorPosition();
     this.updateLineHighlight();
-    this.renderMinimap();
+    this.sendScrollbar();
   }
 
   fullRender(): void {
@@ -469,8 +468,42 @@ export class RenderEngine {
     this.updateLineHighlight();
     this.updateStatusBar();
     this.renderFilePanel();
-    this.renderMinimap();
     this.renderToolbar();
+    this.sendScrollbar();
+  }
+
+  /** Send the active file's name and syntax-highlighted content on demand */
+  /** Send just the active file name to Resonite */
+  sendFileName(): void {
+    const doc = this.getDocument();
+    const fileName = doc
+      ? (doc.isUntitled ? 'Untitled' : doc.fileName.split(/[\\/]/).pop()!)
+      : 'No file';
+    this.proxy.send('fileInfo:name', fileName);
+  }
+
+  /** Send the active file's name and syntax-highlighted content on demand */
+  sendFileInfo(): void {
+    const doc = this.getDocument();
+    const fileName = doc
+      ? (doc.isUntitled ? 'Untitled' : doc.fileName.split(/[\\/]/).pop()!)
+      : 'No file';
+    this.proxy.send('fileInfo:name', fileName);
+
+    if (!doc) {
+      this.proxy.send('fileInfo:content', '');
+      return;
+    }
+
+    const useHighlight = this.highlighter.enabled && this.isHighlightable();
+    const lines: string[] = [];
+    for (let i = 0; i < doc.lineCount; i++) {
+      const text = doc.lineAt(i).text;
+      lines.push(useHighlight
+        ? this.highlighter.highlight(text)
+        : `<color=#abb2bf>${escHtml(text)}</color>`);
+    }
+    this.proxy.send('fileInfo:content', lines.join('\n'));
   }
 
   /** Sync cursor/scroll from VSCode editor state */

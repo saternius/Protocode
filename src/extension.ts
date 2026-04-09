@@ -7,6 +7,8 @@ import { RenderEngine } from './render/render-engine';
 import { FileManager } from './editor/file-manager';
 import { InputHandler } from './editor/input-handler';
 import { EditBridge } from './editor/edit-bridge';
+import { CompileManager } from './services/compile-manager';
+import { FunctionRunner } from './services/function-runner';
 import { RENDER_W, RENDER_H } from './render/display-constants';
 
 let proxy: EmbeddedProxy | null = null;
@@ -15,6 +17,8 @@ let renderEngine: RenderEngine | null = null;
 let fileManager: FileManager | null = null;
 let inputHandler: InputHandler | null = null;
 let editBridge: EditBridge | null = null;
+let compileManager: CompileManager | null = null;
+let functionRunner: FunctionRunner | null = null;
 let log: vscode.OutputChannel | null = null;
 let rlPollInterval: ReturnType<typeof setInterval> | null = null;
 let rlConnected: boolean = false;
@@ -72,8 +76,18 @@ async function startProtoCode(): Promise<void> {
   // Create edit bridge for applying VR input to VSCode
   editBridge = new EditBridge(renderEngine);
 
+  // Create compile manager
+  compileManager = new CompileManager(proxy, log!, () => rlConnected);
+
+  // Create function runner (executes JS files from configured functs dir)
+  functionRunner = new FunctionRunner(
+    proxy,
+    log!,
+    () => vscode.workspace.getConfiguration('protocode').get<number>('resonitelinkPort', 0),
+  );
+
   // Create input handler to parse Resonite messages
-  inputHandler = new InputHandler(editBridge, renderEngine, log!);
+  inputHandler = new InputHandler(editBridge, renderEngine, log!, compileManager, functionRunner);
 
   // Create file manager to listen to VSCode events
   fileManager = new FileManager(renderEngine);
@@ -126,35 +140,43 @@ function handleResonitelinkPortChange(): void {
 }
 
 async function pingResoniteLink(port: number): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    const timeout = setTimeout(() => {
-      ws.close();
-      resolve(false);
-    }, 3000);
+  try {
+    return await new Promise<boolean>((resolve) => {
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      const cleanup = () => {
+        ws.removeAllListeners();
+        ws.terminate();
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(false);
+      }, 3000);
 
-    ws.on('open', () => {
-      ws.send(JSON.stringify({
-        $type: 'getSlot',
-        messageId: 'ping-' + Date.now(),
-        slotId: 'Root',
-        depth: 0,
-        includeComponentData: false
-      }));
-    });
+      ws.on('open', () => {
+        ws.send(JSON.stringify({
+          $type: 'getSlot',
+          messageId: 'ping-' + Date.now(),
+          slotId: 'Root',
+          depth: 0,
+          includeComponentData: false
+        }));
+      });
 
-    ws.on('message', () => {
-      clearTimeout(timeout);
-      ws.close();
-      resolve(true);
-    });
+      ws.on('message', () => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve(true);
+      });
 
-    ws.on('error', () => {
-      clearTimeout(timeout);
-      ws.close();
-      resolve(false);
+      ws.on('error', () => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve(false);
+      });
     });
-  });
+  } catch {
+    return false;
+  }
 }
 
 function startRlPolling(): void {
@@ -235,8 +257,13 @@ function stopProtoCode(): void {
   fileManager = null;
   inputHandler = null;
   editBridge = null;
+  functionRunner?.dispose();
+  functionRunner = null;
+  compileManager?.dispose();
+  compileManager = null;
   renderEngine?.dispose();
   renderEngine = null;
+  proxy.removeAllListeners();
   proxy.stop();
   proxy = null;
   statusBar?.showStopped();

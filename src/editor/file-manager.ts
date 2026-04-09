@@ -64,6 +64,7 @@ export class FileManager {
       vscode.window.onDidChangeActiveTextEditor(() => {
         this.dirtyFull = true;
         this.scheduleFlush();
+        this.renderEngine.sendFileName();
       })
     );
 

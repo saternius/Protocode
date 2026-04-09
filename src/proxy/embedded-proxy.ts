@@ -104,8 +104,12 @@ export class EmbeddedProxy extends EventEmitter {
 
   private broadcast(msg: string): void {
     for (const ws of this.clients) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(msg);
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(msg);
+        }
+      } catch {
+        this.clients.delete(ws);
       }
     }
   }

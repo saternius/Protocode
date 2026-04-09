@@ -70,6 +70,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable syntax highlighting for JavaScript files"
+        },
+        "protocode.functsDir": {
+          "type": "string",
+          "default": "functs",
+          "description": "Directory (workspace-relative or absolute) holding runFunction script files"
         }
       }
     }
