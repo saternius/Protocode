@@ -32,6 +32,7 @@ export type ParsedEvent =
   | { type: 'runFunction'; uniqueId: string; fileName: string; args: string[] };
 
 const APP_NAME = 'ProtoCodeEditor';
+const KEYBOARD_APP_NAME = 'Keyboard';
 
 // Resonite serialises a Slot reference as "<SlotName> (<RefID>)" via ToString.
 // RefIDs are clientside-only and not exposed by ResoniteLink, so we keep the
@@ -290,16 +291,16 @@ export class InputHandler {
       const secondColon = raw.indexOf(':', firstColon + 1);
       if (secondColon === -1) return null;
       const app = raw.substring(firstColon + 1, secondColon);
-      if (app !== APP_NAME) return null;
 
       const rest = raw.substring(secondColon + 1);
       const pilcrowIdx = rest.indexOf('\u00B6');
       const buttonId = pilcrowIdx >= 0 ? rest.substring(0, pilcrowIdx) : rest;
       const payload = pilcrowIdx >= 0 ? rest.substring(pilcrowIdx + 1) : '';
 
-      if (buttonId.startsWith('kb_')) {
+      if (buttonId.startsWith('kb_') && (app === APP_NAME || app === KEYBOARD_APP_NAME)) {
         return this.parseKeyboardClick(buttonId.substring(3));
       }
+      if (app !== APP_NAME) return null;
       switch (buttonId) {
         case 'CompileBtn':
           return { type: 'pceCompileBtn' };
