@@ -41,6 +41,8 @@ export class CompileService {
 
   private _compile(source: string, filename: string, outDir: string | null): Promise<CompileResult> {
     return new Promise((resolve) => {
+      // Temp dir only holds the source file — flux-sdk output goes straight to outDir
+      // (or to tmpDir when no outDir was provided, for ephemeral compiles like Compile RL).
       const tmpDir = path.join(os.tmpdir(), `pg_${randomUUID()}`);
       fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -48,9 +50,29 @@ export class CompileService {
       const detectedName = moduleMatch ? moduleMatch[1] : null;
       const safeName = (detectedName || filename || 'Untitled').replace(/[^a-zA-Z0-9_]/g, '') || 'Untitled';
       const srcFile = path.join(tmpDir, `${safeName}.pg`);
-      const brsonFile = path.join(tmpDir, `${safeName}.brson`);
-      const debugFile = path.join(tmpDir, `${safeName}_debug.json`);
-      const componentFile = path.join(tmpDir, `${safeName}_components.txt`);
+
+      const outputDir = outDir ?? tmpDir;
+      if (outDir) {
+        try {
+          fs.mkdirSync(outDir, { recursive: true });
+        } catch (err: any) {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+          resolve({
+            success: false,
+            errors: [{ message: `Failed to create output directory ${outDir}: ${err.message}` }],
+            warnings: [],
+            nodeCount: 0,
+            recordJson: null,
+            componentIR: '',
+            rawOutput: '',
+          });
+          return;
+        }
+      }
+
+      const brsonFile = path.join(outputDir, `${safeName}.brson`);
+      const debugFile = path.join(outputDir, `${safeName}_debug.json`);
+      const componentFile = path.join(outputDir, `${safeName}_components.txt`);
 
       fs.writeFileSync(srcFile, source, 'utf8');
 
@@ -66,8 +88,13 @@ export class CompileService {
       ];
 
       this.log.appendLine(`[Compile] Running: flux-sdk ${args.join(' ')}`);
+      this.log.appendLine(`[Compile] cwd: ${tmpDir}`);
 
-      const child = spawn('flux-sdk', args, { shell: true, timeout: 30000 });
+      // cwd must be tmpDir: flux-sdk uses cwd as the project directory and resolves
+      // the target .pg path relative to it. Inheriting cwd from the extension host
+      // lands us in a workspace with no relation to the temp source, and flux-sdk
+      // fails with "not found at expected path" (see INTERNAL.pg error).
+      const child = spawn('flux-sdk', args, { shell: true, timeout: 30000, cwd: tmpDir });
       let stdout = '';
       let stderr = '';
 
@@ -78,25 +105,7 @@ export class CompileService {
         const output = stdout + stderr;
         const result = this.parseOutput(output, code ?? 1, debugFile, componentFile);
 
-        // Copy output files if outDir specified and compile succeeded
-        if (outDir && result.success) {
-          try {
-            fs.mkdirSync(outDir, { recursive: true });
-            if (fs.existsSync(brsonFile)) {
-              fs.copyFileSync(brsonFile, path.join(outDir, `${safeName}.brson`));
-            }
-            if (fs.existsSync(debugFile)) {
-              fs.copyFileSync(debugFile, path.join(outDir, `${safeName}_debug.json`));
-            }
-            if (fs.existsSync(componentFile)) {
-              fs.copyFileSync(componentFile, path.join(outDir, `${safeName}_components.txt`));
-            }
-          } catch (err: any) {
-            this.log.appendLine(`[Compile] Failed to copy output files: ${err.message}`);
-          }
-        }
-
-        // Cleanup temp dir
+        // Cleanup temp source dir (output files live in outputDir which we keep)
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 
         resolve(result);

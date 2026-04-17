@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { EmbeddedProxy } from '../proxy/embedded-proxy';
 import { SyntaxHighlighter } from './syntax-highlighter';
+import { FileTree, TreeNode } from '../editor/file-tree';
 import {
   RENDER_W, RENDER_H, LINE_H, MAX_VISIBLE_LINES,
   CODE_AREA_TOP, CHAR_W_APPROX, CODE_LEFT_X, GUTTER_RIGHT_X,
@@ -24,8 +25,9 @@ export class RenderEngine {
   selAnchorCol: number = 0;
 
   // File panel state
-  openFiles: string[] = [];
-  activeFileIndex: number = -1;
+  fileTree: FileTree | null = null;
+  visibleNodes: TreeNode[] = [];
+  activeNodeRelPath: string | null = null;
 
   // Blink
   private cursorVisible: boolean = true;
@@ -315,54 +317,62 @@ export class RenderEngine {
   // File panel
   // ------------------------------------------------------------------
 
-  updateOpenFiles(): void {
-    const files: string[] = [];
-    let activeIdx = -1;
+  setFileTree(tree: FileTree): void {
+    this.fileTree = tree;
+    this.refreshFileTreeState();
+  }
 
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input && typeof (tab.input as any).uri !== 'undefined') {
-          const uri = (tab.input as any).uri as vscode.Uri;
-          const name = uri.path.split('/').pop() || 'Untitled';
-          files.push(name);
-          if (tab.isActive && group.isActive) {
-            activeIdx = files.length - 1;
-          }
-        }
-      }
+  getVisibleFileNodes(): TreeNode[] {
+    return this.visibleNodes;
+  }
+
+  refreshFileTreeState(): void {
+    if (!this.fileTree) {
+      this.visibleNodes = [];
+      this.activeNodeRelPath = null;
+      return;
     }
 
-    this.openFiles = files;
-    this.activeFileIndex = activeIdx;
+    // Determine active file from VSCode editor and auto-reveal it.
+    const activeUri = vscode.window.activeTextEditor?.document.uri;
+    let activeNode: TreeNode | null = null;
+    if (activeUri) {
+      activeNode = this.fileTree.getNodeByUri(activeUri);
+      if (activeNode) this.fileTree.revealFile(activeNode.relPath);
+    }
+    this.activeNodeRelPath = activeNode ? activeNode.relPath : null;
+    this.visibleNodes = this.fileTree.getVisible();
   }
 
   renderFilePanel(): void {
     for (let i = 0; i < MAX_FILE_ENTRIES; i++) {
-      let entry: string;
-      if (i < this.openFiles.length) {
-        const isActive = i === this.activeFileIndex;
-        const color = isActive ? '#e5c07b' : '#5c6271';
-        const prefix = isActive ? '> ' : '  ';
-        entry = `<color=${color}>${escHtml(prefix + this.openFiles[i])}</color>`;
-      } else {
-        entry = '';
-      }
-
+      const node = i < this.visibleNodes.length ? this.visibleNodes[i] : null;
+      const entry = node ? this.formatTreeRow(node) : '';
       if (this.displayedFileEntry[i] !== entry) {
         this.displayedFileEntry[i] = entry;
         this.proxy.send('pce_f' + i, entry);
       }
     }
 
-    // File panel header
-    const headerText = `<color=#61afef>OPEN FILES (${this.openFiles.length})</color>`;
-    this.proxy.send('pce_fh', headerText);
+    // File panel header — name of the rooted directory.
+    const headerLabel = this.fileTree ? this.fileTree.rootDirName + '/' : 'NO WORKSPACE';
+    this.proxy.send('pce_fh', `<color=#61afef>${escHtml(headerLabel)}</color>`);
+    this.proxy.send('pce_fhp', '');
+  }
 
-    // File panel header path
-    const doc = this.getDocument();
-    const folder = doc ? doc.uri.path.split('/').slice(-2, -1)[0] || '' : '';
-    const pathText = `<color=#5c6271>${escHtml(folder)}</color>`;
-    this.proxy.send('pce_fhp', pathText);
+  private formatTreeRow(node: TreeNode): string {
+    const indent = '  '.repeat(node.depth);
+    let icon: string;
+    let color: string;
+    if (node.type === 'folder') {
+      const open = this.fileTree?.isExpanded(node.relPath) ?? false;
+      icon = open ? '▼ ' : '▶ ';
+      color = '#61afef';
+    } else {
+      icon = '  ';
+      color = node.relPath === this.activeNodeRelPath ? '#e5c07b' : '#abb2bf';
+    }
+    return `<color=${color}>${escHtml(indent + icon + node.name)}</color>`;
   }
 
   // ------------------------------------------------------------------
@@ -462,7 +472,7 @@ export class RenderEngine {
 
   fullRender(): void {
     this.invalidateDisplayCache();
-    this.updateOpenFiles();
+    this.refreshFileTreeState();
     this.renderVisibleLines();
     this.updateCursorPosition();
     this.updateLineHighlight();

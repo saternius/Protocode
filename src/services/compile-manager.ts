@@ -72,11 +72,9 @@ export class CompileManager {
     const source = doc.getText();
     const moduleName = fileName.replace(/\.pg$/, '');
 
-    // Output to workspace out/<module>/
+    // Resolve output directory from configuration, falling back to <workspace>/out
     const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const outDir = wsFolder
-      ? path.join(wsFolder, 'out', moduleName)
-      : null;
+    const outDir = this.resolveOutDir(wsFolder, moduleName);
 
     const result = outDir
       ? await this.compileService.compileToDir(source, moduleName, outDir)
@@ -88,7 +86,10 @@ export class CompileManager {
         msg += `\n<color=#facc15>${result.warnings.length} warning(s)</color>`;
       }
       if (outDir) {
-        msg += `\n<color=#94a3b8>Output: out/${moduleName}/</color>`;
+        const displayPath = wsFolder && !path.relative(wsFolder, outDir).startsWith('..')
+          ? path.relative(wsFolder, outDir).replace(/\\/g, '/')
+          : outDir;
+        msg += `\n<color=#94a3b8>Output: ${esc(displayPath)}/</color>`;
       }
       this.sendStatus(msg);
     } else {
@@ -106,7 +107,7 @@ export class CompileManager {
     this.updateWindowState();
   }
 
-  async compileAndDeploy(refFieldCompId: string): Promise<void> {
+  async compileAndDeploy(targetSlotName: string, targetRefId: string | null): Promise<void> {
     const doc = vscode.window.activeTextEditor?.document;
     if (!doc) {
       this.sendStatus('<color=#f87171>No active file</color>');
@@ -116,6 +117,11 @@ export class CompileManager {
     const fileName = path.basename(doc.fileName);
     if (!fileName.endsWith('.pg')) {
       this.sendStatus(`<color=#f87171>${esc(fileName)} is not a .pg file</color>`);
+      return;
+    }
+
+    if (!targetSlotName.trim()) {
+      this.sendStatus('<color=#f87171>No target slot selected. Drop a slot onto the Target Slot field.</color>');
       return;
     }
 
@@ -159,15 +165,37 @@ export class CompileManager {
     }
 
     try {
-      // Step 3: Read target slot from ReferenceField
-      this.sendStatus(`<color=#4ade80>Compiled</color> ${result.nodeCount} nodes\n<color=#facc15>Reading target slot...</color>`);
+      // Step 3: Resolve target slot by name (ResoniteLink can't look up Resonite
+      // clientside refIDs, so we crawl the hierarchy and match on the name
+      // extracted from the dropped slot's ToString).
+      this.sendStatus(
+        `<color=#4ade80>Compiled</color> ${result.nodeCount} nodes\n` +
+        `<color=#facc15>Locating "${esc(targetSlotName)}"...</color>`
+      );
 
-      const refComp = await rlClient.getComponent(refFieldCompId);
-      const targetId = refComp?.members?.Reference?.targetId;
-      if (!targetId) {
-        this.sendStatus('<color=#f87171>No target slot selected. Drop a slot onto the Target Slot field.</color>');
+      let matches: any[];
+      try {
+        matches = await rlClient.findSlotsByName(targetSlotName);
+      } catch (err: any) {
+        this.sendStatus(`<color=#f87171>Lookup failed: ${esc(err.message)}</color>`);
         return;
       }
+
+      if (matches.length === 0) {
+        const hint = targetRefId ? ` (refID ${targetRefId})` : '';
+        this.sendStatus(`<color=#f87171>No slot named "${esc(targetSlotName)}"${esc(hint)} found in scene</color>`);
+        return;
+      }
+      if (matches.length > 1) {
+        this.sendStatus(
+          `<color=#f87171>Ambiguous target: ${matches.length} slots named "${esc(targetSlotName)}"</color>\n` +
+          `<color=#94a3b8>Rename the target slot to something unique and try again.</color>`
+        );
+        return;
+      }
+
+      const resolvedParentId = matches[0].id;
+      this.log.appendLine(`[Compile] Resolved "${targetSlotName}" → ${resolvedParentId}`);
 
       // Step 4: Deploy
       const deployer = new Deployer(this.log);
@@ -175,7 +203,7 @@ export class CompileManager {
         this.sendStatus(`<color=#4ade80>Compiled</color> ${result.nodeCount} nodes\n<color=#facc15>${esc(msg)}</color>`);
       };
 
-      const deployResult = await deployer.deploy(rlClient, result, targetId, moduleName);
+      const deployResult = await deployer.deploy(rlClient, result, resolvedParentId, moduleName);
       if (deployResult) {
         this.sendStatus(
           `<color=#4ade80>Deployed!</color>\n` +
@@ -193,6 +221,29 @@ export class CompileManager {
 
   private sendStatus(text: string): void {
     this.proxy.send('pce_cw_status', text);
+  }
+
+  /**
+   * Resolve the output directory for a Compile Local run:
+   *   - `protocode.compileOutDir` absolute → use as-is
+   *   - `protocode.compileOutDir` relative → joined against the workspace root
+   *   - empty → `<workspace>/out`
+   *   - no workspace and no absolute config → null (caller falls back to an ephemeral temp compile)
+   * The returned path always includes the per-module subdirectory.
+   */
+  private resolveOutDir(wsFolder: string | undefined, moduleName: string): string | null {
+    const configured = vscode.workspace.getConfiguration('protocode').get<string>('compileOutDir', '').trim();
+
+    let baseOutDir: string | null = null;
+    if (configured) {
+      baseOutDir = path.isAbsolute(configured)
+        ? configured
+        : (wsFolder ? path.join(wsFolder, configured) : null);
+    } else if (wsFolder) {
+      baseOutDir = path.join(wsFolder, 'out');
+    }
+
+    return baseOutDir ? path.join(baseOutDir, moduleName) : null;
   }
 
   dispose(): void {

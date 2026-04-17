@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { RenderEngine } from '../render/render-engine';
+import { FileTree } from './file-tree';
 
 export class FileManager {
   private disposables: vscode.Disposable[] = [];
@@ -18,12 +19,22 @@ export class FileManager {
   // Flag to skip render when edits originate from Resonite input
   skipNextDocChange: boolean = false;
 
-  constructor(renderEngine: RenderEngine) {
+  constructor(renderEngine: RenderEngine, fileTree: FileTree | null) {
     this.renderEngine = renderEngine;
 
     const config = vscode.workspace.getConfiguration('protocode');
     const fps = config.get<number>('renderFps', 30);
     this.minRenderInterval = Math.floor(1000 / fps);
+
+    // File tree change events (FS create/delete or folder expand/collapse)
+    if (fileTree) {
+      this.disposables.push(
+        fileTree.onChange(() => {
+          this.dirtyTabs = true;
+          this.scheduleFlush();
+        })
+      );
+    }
 
     // Document content changes
     this.disposables.push(
@@ -120,7 +131,7 @@ export class FileManager {
     }
 
     if (this.dirtyTabs) {
-      this.renderEngine.updateOpenFiles();
+      this.renderEngine.refreshFileTreeState();
       this.renderEngine.renderFilePanel();
     }
 

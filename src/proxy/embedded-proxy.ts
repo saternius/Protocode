@@ -4,6 +4,26 @@ import type { OutputChannel } from 'vscode';
 
 const PILCROW = '\u00B6';
 
+/**
+ * High-frequency message patterns suppressed from the `[Proxy] ←` log line
+ * unless verbose mode is enabled. These events fire many times per second
+ * during normal interaction and otherwise drown the output channel.
+ */
+const NOISY_PATTERNS: readonly string[] = [
+  'appEvent:ProtoCodeEditor:pointerMove',
+  'appEvent:ProtoCodeEditor:pointDrag',
+  'appEvent:ProtoCodeEditor:thumbstickAxis',
+  'controllerInput:ProtoCodeEditor:thumbstickAxis',
+  'pce_move',
+];
+
+function isNoisy(raw: string): boolean {
+  for (const p of NOISY_PATTERNS) {
+    if (raw.startsWith(p) || raw.includes(p)) return true;
+  }
+  return false;
+}
+
 export interface ProxyEvents {
   message: (raw: string) => void;
   clientConnected: (count: number) => void;
@@ -15,11 +35,16 @@ export class EmbeddedProxy extends EventEmitter {
   private clients: Set<WebSocket> = new Set();
   private _port: number;
   private log: OutputChannel;
+  private verbose: boolean = false;
 
   constructor(port: number, log: OutputChannel) {
     super();
     this._port = port;
     this.log = log;
+  }
+
+  setVerbose(v: boolean): void {
+    this.verbose = v;
   }
 
   get port(): number {
@@ -50,8 +75,10 @@ export class EmbeddedProxy extends EventEmitter {
 
         ws.on('message', (data) => {
           const raw = data.toString();
-          const preview = raw.length > 200 ? raw.slice(0, 200) + '...' : raw;
-          this.log.appendLine(`[Proxy] ← ${preview}`);
+          if (this.verbose || !isNoisy(raw)) {
+            const preview = raw.length > 200 ? raw.slice(0, 200) + '...' : raw;
+            this.log.appendLine(`[Proxy] ← ${preview}`);
+          }
           this.emit('message', raw);
         });
 

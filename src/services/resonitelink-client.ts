@@ -124,6 +124,21 @@ export class ResoniteLinkClient {
     return res.data;
   }
 
+  // ResoniteLink does not expose Resonite's clientside RefIDs, so the deployer
+  // must resolve a dropped slot reference (which arrives as "<name> (<refID>)")
+  // by crawling the hierarchy and matching on name. Returns every match so the
+  // caller can detect ambiguity.
+  async findSlotsByName(name: string, startSlotId = 'Root'): Promise<any[]> {
+    const root = await this.getSlot(startSlotId, { depth: -1, includeComponentData: false });
+    const matches: any[] = [];
+    const walk = (slot: any) => {
+      if (slot?.name?.value === name) matches.push(slot);
+      if (Array.isArray(slot?.children)) for (const c of slot.children) walk(c);
+    };
+    walk(root);
+    return matches;
+  }
+
   async updateSlot(slotId: string, props: {
     name?: string;
     position?: { x: number; y: number; z: number };

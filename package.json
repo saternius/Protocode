@@ -75,14 +75,27 @@
           "type": "string",
           "default": "functs",
           "description": "Directory (workspace-relative or absolute) holding runFunction script files"
+        },
+        "protocode.compileOutDir": {
+          "type": "string",
+          "default": "",
+          "description": "Output directory for compiled ProtoGraph artifacts (.brson, _debug.json, _components.txt). Relative paths resolve against the workspace root. Leave empty to default to <workspace>/out."
+        },
+        "protocode.verboseProxyLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log every incoming WebSocket message in the ProtoCode output channel. When false, high-frequency events (pointerMove, thumbstickAxis, pce_move) are filtered out."
         }
       }
     }
   },
+  "license": "MIT",
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

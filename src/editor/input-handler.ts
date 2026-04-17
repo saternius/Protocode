@@ -26,12 +26,22 @@ export type ParsedEvent =
   | { type: 'pceRelease'; x: number; y: number }
   | { type: 'pceCompileBtn' }
   | { type: 'pceCompileLocal' }
-  | { type: 'pceCompileRLDeploy'; refFieldCompId: string }
+  | { type: 'pceCompileRLDeploy'; targetSlotName: string; targetRefId: string | null }
   | { type: 'fileInfo' }
   | { type: 'fileSave'; fileName: string; content: string }
   | { type: 'runFunction'; uniqueId: string; fileName: string; args: string[] };
 
 const APP_NAME = 'ProtoCodeEditor';
+
+// Resonite serialises a Slot reference as "<SlotName> (<RefID>)" via ToString.
+// RefIDs are clientside-only and not exposed by ResoniteLink, so we keep the
+// name for a hierarchy crawl and retain the refID only for diagnostic output.
+function parseSlotToString(s: string): { name: string; refId: string | null } {
+  const m = s.match(/^(.*?)\s*\((ID[0-9A-Fa-f]+)\)\s*$/);
+  return m
+    ? { name: m[1].trim(), refId: m[2] }
+    : { name: s.trim(), refId: null };
+}
 
 const KEY_MAP: Record<string, { key: string; shifted?: string }> = {
   // Letters
@@ -168,8 +178,10 @@ export class InputHandler {
           return { type: 'pceCompileBtn' };
         case 'pce_cw_local':
           return { type: 'pceCompileLocal' };
-        case 'pce_cw_rl_deploy':
-          return { type: 'pceCompileRLDeploy', refFieldCompId: data };
+        case 'pce_cw_rl_deploy': {
+          const { name, refId } = parseSlotToString(data);
+          return { type: 'pceCompileRLDeploy', targetSlotName: name, targetRefId: refId };
+        }
       }
       return null;
     }
@@ -268,13 +280,34 @@ export class InputHandler {
       return null;
     }
 
-    // click:AppName:ButtonId (keyboard buttons)
+    // click:AppName:ButtonId[¶payload]
+    // Examples:
+    //   click:ProtoCodeEditor:kb_A                              (keyboard key)
+    //   click:ProtoCodeEditor:CompileLocal                      (compile window button)
+    //   click:ProtoCodeEditor:CompileRL¶pfxTarget (ID61CB100)   (compile window button + slot payload)
     if (raw.startsWith('click:')) {
-      const parts = raw.split(':');
-      if (parts.length >= 3) {
-        const buttonId = parts.slice(2).join(':');
-        if (buttonId.startsWith('kb_')) {
-          return this.parseKeyboardClick(buttonId.substring(3));
+      const firstColon = raw.indexOf(':');
+      const secondColon = raw.indexOf(':', firstColon + 1);
+      if (secondColon === -1) return null;
+      const app = raw.substring(firstColon + 1, secondColon);
+      if (app !== APP_NAME) return null;
+
+      const rest = raw.substring(secondColon + 1);
+      const pilcrowIdx = rest.indexOf('\u00B6');
+      const buttonId = pilcrowIdx >= 0 ? rest.substring(0, pilcrowIdx) : rest;
+      const payload = pilcrowIdx >= 0 ? rest.substring(pilcrowIdx + 1) : '';
+
+      if (buttonId.startsWith('kb_')) {
+        return this.parseKeyboardClick(buttonId.substring(3));
+      }
+      switch (buttonId) {
+        case 'CompileBtn':
+          return { type: 'pceCompileBtn' };
+        case 'CompileLocal':
+          return { type: 'pceCompileLocal' };
+        case 'CompileRL': {
+          const { name, refId } = parseSlotToString(payload);
+          return { type: 'pceCompileRLDeploy', targetSlotName: name, targetRefId: refId };
         }
       }
       return null;
@@ -359,8 +392,8 @@ export class InputHandler {
         this.compileManager?.compileLocal();
         break;
       case 'pceCompileRLDeploy':
-        this.log.appendLine(`[Input] pceCompileRLDeploy: ${event.refFieldCompId}`);
-        this.compileManager?.compileAndDeploy(event.refFieldCompId);
+        this.log.appendLine(`[Input] pceCompileRLDeploy: "${event.targetSlotName}" (${event.targetRefId ?? 'no refID'})`);
+        this.compileManager?.compileAndDeploy(event.targetSlotName, event.targetRefId);
         break;
       case 'fileInfo':
         this.log.appendLine('[Input] fileInfo request');
@@ -496,22 +529,15 @@ export class InputHandler {
   }
 
   private handleFileClick(index: number): void {
-    if (index < 0 || index >= this.renderEngine.openFiles.length) return;
-
-    // Find the corresponding tab and show its document
-    let tabIdx = 0;
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input && typeof (tab.input as any).uri !== 'undefined') {
-          if (tabIdx === index) {
-            const uri = (tab.input as any).uri as vscode.Uri;
-            vscode.window.showTextDocument(uri);
-            return;
-          }
-          tabIdx++;
-        }
-      }
+    const nodes = this.renderEngine.getVisibleFileNodes();
+    if (index < 0 || index >= nodes.length) return;
+    const node = nodes[index];
+    if (node.type === 'folder') {
+      this.renderEngine.fileTree?.toggleFolder(node.relPath);
+      // onChange fires → FileManager re-renders the panel
+      return;
     }
+    vscode.window.showTextDocument(node.uri);
   }
 
   private handleScrollbarClick(pxY: number): void {

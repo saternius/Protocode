@@ -5,6 +5,7 @@ import { EmbeddedProxy } from './proxy/embedded-proxy';
 import { StatusBar } from './ui/status-bar';
 import { RenderEngine } from './render/render-engine';
 import { FileManager } from './editor/file-manager';
+import { FileTree } from './editor/file-tree';
 import { InputHandler } from './editor/input-handler';
 import { EditBridge } from './editor/edit-bridge';
 import { CompileManager } from './services/compile-manager';
@@ -15,16 +16,19 @@ let proxy: EmbeddedProxy | null = null;
 let statusBar: StatusBar | null = null;
 let renderEngine: RenderEngine | null = null;
 let fileManager: FileManager | null = null;
+let fileTree: FileTree | null = null;
 let inputHandler: InputHandler | null = null;
 let editBridge: EditBridge | null = null;
 let compileManager: CompileManager | null = null;
 let functionRunner: FunctionRunner | null = null;
 let log: vscode.OutputChannel | null = null;
+let extensionUri: vscode.Uri | null = null;
 let rlPollInterval: ReturnType<typeof setInterval> | null = null;
 let rlConnected: boolean = false;
 
 export function activate(context: vscode.ExtensionContext) {
   log = vscode.window.createOutputChannel('ProtoCode');
+  extensionUri = context.extensionUri;
   context.subscriptions.push(log);
 
   statusBar = new StatusBar();
@@ -47,6 +51,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('protocode.resonitelinkPort')) {
         handleResonitelinkPortChange();
       }
+      if (e.affectsConfiguration('protocode.verboseProxyLog')) {
+        const v = vscode.workspace.getConfiguration('protocode').get<boolean>('verboseProxyLog', false);
+        proxy?.setVerbose(v);
+      }
     })
   );
 }
@@ -61,6 +69,7 @@ async function startProtoCode(): Promise<void> {
   const port = config.get<number>('wsPort', 3001);
 
   proxy = new EmbeddedProxy(port, log!);
+  proxy.setVerbose(config.get<boolean>('verboseProxyLog', false));
 
   try {
     await proxy.start();
@@ -72,6 +81,17 @@ async function startProtoCode(): Promise<void> {
 
   // Create render engine wired to proxy
   renderEngine = new RenderEngine(proxy);
+
+  // Build the file tree for the extension's example/ directory.
+  if (extensionUri) {
+    fileTree = new FileTree(extensionUri, 'example', log!);
+    try {
+      await fileTree.build();
+      renderEngine.setFileTree(fileTree);
+    } catch (err: any) {
+      log!.appendLine(`[ProtoCode] FileTree build failed: ${err?.message ?? err}`);
+    }
+  }
 
   // Create edit bridge for applying VR input to VSCode
   editBridge = new EditBridge(renderEngine);
@@ -90,7 +110,7 @@ async function startProtoCode(): Promise<void> {
   inputHandler = new InputHandler(editBridge, renderEngine, log!, compileManager, functionRunner);
 
   // Create file manager to listen to VSCode events
-  fileManager = new FileManager(renderEngine);
+  fileManager = new FileManager(renderEngine, fileTree);
 
   // Wire proxy incoming messages to input handler
   proxy.on('message', (raw: string) => {
@@ -108,6 +128,12 @@ async function startProtoCode(): Promise<void> {
   proxy.on('clientDisconnected', (count: number) => {
     statusBar?.updateClients(count);
   });
+
+  // If a Resonite client connected during setup (before the clientConnected
+  // listener was wired up), the initial fullRender was missed — force one now.
+  if (proxy.clientCount > 0) {
+    renderEngine.fullRender();
+  }
 
   statusBar?.showListening(port);
   log!.appendLine(`[ProtoCode] Started on port ${port}`);
@@ -255,6 +281,8 @@ function stopProtoCode(): void {
 
   fileManager?.dispose();
   fileManager = null;
+  fileTree?.dispose();
+  fileTree = null;
   inputHandler = null;
   editBridge = null;
   functionRunner?.dispose();

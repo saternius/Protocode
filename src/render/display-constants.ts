@@ -14,7 +14,7 @@ export const CHAR_W_APPROX = 10.0;
 
 // File panel
 export const FILE_PANEL_W = 280;
-export const MAX_FILE_ENTRIES = 16;
+export const MAX_FILE_ENTRIES = 40;
 export const FILE_AREA_TOP = 460; // (RENDER_H/2) - 40
 
 // Scrollbar
