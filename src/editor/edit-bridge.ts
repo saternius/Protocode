@@ -102,6 +102,62 @@ export class EditBridge {
     this.renderEngine.fullRender();
   }
 
+  /** Cut */
+  async cut(): Promise<void> {
+    const editor = this.getEditor();
+    if (!editor) return;
+    const sel = editor.selection;
+    const text = sel.isEmpty
+      ? editor.document.lineAt(sel.active.line).text + '\n'
+      : editor.document.getText(sel);
+    await vscode.env.clipboard.writeText(text);
+    if (sel.isEmpty) {
+      const line = sel.active.line;
+      const lineCount = editor.document.lineCount;
+      const range = line < lineCount - 1
+        ? new vscode.Range(line, 0, line + 1, 0)
+        : new vscode.Range(
+            line === 0 ? 0 : line - 1,
+            line === 0 ? 0 : editor.document.lineAt(line - 1).text.length,
+            line,
+            editor.document.lineAt(line).text.length,
+          );
+      await editor.edit(b => b.delete(range));
+    } else {
+      await editor.edit(b => b.delete(sel));
+    }
+    this.renderEngine.syncFromEditor();
+    this.renderEngine.fullRender();
+  }
+
+  /** Copy */
+  async copy(): Promise<void> {
+    const editor = this.getEditor();
+    if (!editor) return;
+    const sel = editor.selection;
+    const text = sel.isEmpty
+      ? editor.document.lineAt(sel.active.line).text + '\n'
+      : editor.document.getText(sel);
+    await vscode.env.clipboard.writeText(text);
+  }
+
+  /** Paste */
+  async paste(): Promise<void> {
+    const editor = this.getEditor();
+    if (!editor) return;
+    const text = await vscode.env.clipboard.readText();
+    if (!text) return;
+    await editor.edit(b => {
+      if (!editor.selection.isEmpty) {
+        b.replace(editor.selection, text);
+      } else {
+        b.insert(editor.selection.active, text);
+      }
+    });
+    this.renderEngine.syncFromEditor();
+    this.renderEngine.fullRender();
+  }
+
   /** Set cursor to specific line/col (from pointer click) */
   setCursor(line: number, col: number): void {
     const editor = this.getEditor();

@@ -432,7 +432,25 @@ export class InputHandler {
         case 'y':
           this.editBridge.redo();
           return;
+        case 'x':
+          this.editBridge.cut();
+          return;
+        case 'c':
+          this.editBridge.copy();
+          return;
+        case 'v':
+          this.editBridge.paste();
+          return;
       }
+    }
+
+    // Function-key shortcuts
+    switch (baseKey) {
+      case 'F8': this.editBridge.cut(); return;
+      case 'F9': this.editBridge.copy(); return;
+      case 'F10': this.editBridge.paste(); return;
+      case 'F11': this.editBridge.redo(); return;
+      case 'F12': this.editBridge.undo(); return;
     }
 
     // Navigation & editing keys
